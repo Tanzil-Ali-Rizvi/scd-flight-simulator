@@ -1,0 +1,323 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SaaS Flight Simulator — Research Study</title>
+<style>
+:root{--bg:#f6f7f9;--card:#fff;--ink:#1d2433;--mute:#5d6778;--line:#dde2ea;--acc:#2456c9;--ok:#1e7d4f;--bad:#b3261e;--warn:#9a6700}
+*{box-sizing:border-box}body{margin:0;font:15px/1.5 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;background:var(--bg);color:var(--ink)}
+header{background:#14213d;color:#fff;padding:10px 20px;display:flex;justify-content:space-between;align-items:center}
+header b{font-weight:600}header span{opacity:.8;font-size:13px}
+main{max-width:1100px;margin:20px auto;padding:0 16px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:22px;margin-bottom:16px}
+h1{font-size:22px;margin:0 0 10px}h2{font-size:18px;margin:0 0 8px}
+button{font:inherit;padding:9px 16px;border-radius:7px;border:1px solid var(--acc);background:var(--acc);color:#fff;cursor:pointer}
+button.sec{background:#fff;color:var(--acc)}button:disabled{opacity:.45;cursor:not-allowed}
+table{border-collapse:collapse;width:100%;font-size:14px}th,td{border-bottom:1px solid var(--line);padding:7px 6px;text-align:left;vertical-align:top}
+th{font-size:12px;text-transform:uppercase;letter-spacing:.03em;color:var(--mute);font-weight:600}
+select{font:inherit;padding:5px;border-radius:6px;border:1px solid var(--line);max-width:190px}
+.pill{display:inline-block;padding:1px 8px;border-radius:99px;font-size:12px;font-weight:600}
+.hi{background:#fde7e5;color:var(--bad)}.md{background:#fff3d6;color:var(--warn)}.lo{background:#e3f4ea;color:var(--ok)}
+.ai{background:#eef3ff;border-radius:6px;padding:4px 8px;font-size:13px}
+.det{background:#f8f9fb;border:1px dashed var(--line);border-radius:6px;padding:8px;margin-top:6px;font-size:13px}
+.kpi{display:flex;gap:24px;flex-wrap:wrap;margin:6px 0 12px}.kpi div{font-size:13px;color:var(--mute)}.kpi b{display:block;font-size:20px;color:var(--ink)}
+.q{margin:14px 0}.q label{display:block;margin:3px 0}.mute{color:var(--mute);font-size:13px}
+.row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+input[type=range]{width:100%}.err{color:var(--bad);font-size:13px}
+.code{font:600 20px ui-monospace,Menlo,monospace;letter-spacing:.08em}
+textarea{width:100%;height:140px;font:12px ui-monospace,monospace}
+</style>
+</head>
+<body>
+<header><b>SaaS Flight Simulator</b><span id="hdr"></span></header>
+<main id="app"></main>
+<script>
+"use strict";
+/* =====================================================================
+   SaaS Flight Simulator — research instrument (v1.0)
+   Records REAL participant behaviour only. Nothing is estimated or filled in.
+   Design is documented in the "SCD Experiment: Study Protocol Pack".
+   ===================================================================== */
+const VERSION = "1.1.0";
+/* ---- ONLINE MODE (free hosting) ----
+   Leave DATAPIPE_ID empty for lab use (files saved locally).
+   For online collection: create a DataPipe experiment at https://pipe.jspsych.org (free, data go to your private OSF project),
+   enable data collection + condition assignment (3 conditions), and paste its experiment ID here. */
+const DATAPIPE_ID = "";
+const RECRUITING = false;   // set true ONLY after ethics approval + OSF preregistration; otherwise the app shows a "not yet open" page to visitors
+const SCENARIO_SEED = 20261110;           // same scenarios for every participant
+const N_PRACTICE = 2, N_ROUTINE = 10, N_ANOMALY = 4, N_ACCOUNTS = 8;
+const COND = {C:"Control (Manual)", A:"Automated (Full AI)", I:"Interactive (Friction-by-Design)"};
+const DRIVERS = {price:"Price sensitivity", adoption:"Low product adoption", support:"Unresolved support issues", billing:"Payment / billing failure"};
+const ACTIONS = {none:"No action", discount:"Offer 15% discount", training:"Adoption training session", success:"Escalate to customer success", billing:"Fix billing & retry payment"};
+const FIX = {price:"discount", adoption:"training", support:"success", billing:"billing"};
+
+/* ---------- utilities ---------- */
+function mulberry32(a){return function(){a|=0;a=a+0x6D2B79F5|0;let t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296}}
+const rng = mulberry32(SCENARIO_SEED);
+const ri=(a,b)=>a+Math.floor(rng()*(b-a+1)), pick=a=>a[Math.floor(rng()*a.length)];
+const $=s=>document.querySelector(s);
+const fmt$=v=>"$"+Math.round(v/1000)+"k";
+function randCode(){const c="ABCDEFGHJKLMNPQRSTUVWXYZ23456789",b=new Uint8Array(8);crypto.getRandomValues(b);return "P-"+[...b].map(x=>c[x%c.length]).join("")}
+function store(k,v){try{localStorage.setItem(k,JSON.stringify(v))}catch(e){}}
+function load(k,d){try{const v=localStorage.getItem(k);return v?JSON.parse(v):d}catch(e){return d}}
+function download(name,text,type){const b=new Blob([text],{type});const a=document.createElement("a");a.href=URL.createObjectURL(b);a.download=name;document.body.appendChild(a);a.click();a.remove();}
+const median=a=>{const s=[...a].sort((x,y)=>x-y),m=s.length>>1;return s.length?(s.length%2?s[m]:(s[m-1]+s[m])/2):null};
+
+/* ---------- scenario generation (deterministic) ---------- */
+const NAMES=["Acme","Brightline","Cobalt","Dunmore","Everfield","Fintrail","Gridwave","Harbor","Ionix","Juniper","Keystone","Lumen","Meridian","Northgate","Orbital","Pinecrest","Quanta","Ridgeway","Solace","Tidewell","Upland","Vertex","Westbrook","Xylo","Yardley","Zenith"];
+function signalsFor(driver){
+  // Each true driver produces a characteristic signal pattern; other signals are background noise.
+  const s={usage:ri(-12,6),seats:ri(62,92),tickets:ri(0,3),csat:ri(72,95),payment:"OK",priceReq:"No"};
+  if(driver==="price"){s.priceReq="Yes";s.usage=ri(-8,4)}
+  if(driver==="adoption"){s.usage=ri(-48,-28);s.seats=ri(18,40)}
+  if(driver==="support"){s.tickets=ri(7,14);s.csat=ri(28,52)}
+  if(driver==="billing"){s.payment=pick(["Failed (2x)","Failed (3x)","Card declined"]);s.usage=ri(-55,-35);s.seats=ri(40,70)} // locked-out accounts look like low usage
+  return s;
+}
+function buildRound(idx,phase){
+  const accts=[];
+  for(let k=0;k<N_ACCOUNTS;k++){
+    let driver;
+    if(phase==="anomaly") driver = k<6 ? "billing" : pick(["price","adoption","support"]);   // regime shift: novel driver dominates
+    else driver = pick(["price","adoption","support","price","adoption","support","billing"]); // billing rare before shift
+    const s=signalsFor(driver), arr=ri(60,380)*1000;
+    // AI model: trained before the shift; reads billing-driven usage drops as low adoption.
+    let ai = FIX[driver], aiFlawed=false;
+    if(phase==="anomaly" && driver==="billing"){ai="training";aiFlawed=true}
+    else if(phase!=="anomaly" && k===idx%N_ACCOUNTS){ai=pick(Object.keys(FIX).map(d=>FIX[d]).filter(a=>a!==FIX[driver]));aiFlawed=true} // ~1 in 8 routine errors
+    const risk = ri(phase==="anomaly"?70:55,96);
+    accts.push({id:`${pick(NAMES)}-${100+ri(0,899)}`,arr,driver,s,ai,aiFlawed,risk});
+  }
+  return {index:idx,phase,accts};
+}
+const ROUNDS=[];
+for(let i=0;i<N_PRACTICE;i++)ROUNDS.push(buildRound(i,"practice"));
+for(let i=0;i<N_ROUTINE;i++)ROUNDS.push(buildRound(i,"routine"));
+for(let i=0;i<N_ANOMALY;i++)ROUNDS.push(buildRound(i,"anomaly"));
+
+/* ---------- questionnaires ---------- */
+const LITERACY=[
+ ["Monthly revenue fell from $200k to $150k. What is the percentage drop?",["25%","33%","50%","75%"],0],
+ ["ARR stands for…",["Annual Recurring Revenue","Average Revenue Rate","Account Retention Ratio","Adjusted Revenue Return"],0],
+ ["A churn rate of 2% per month means, roughly, how much of the customer base is lost in a year?",["About 2%","About 12%","About 22%","About 50%"],2],
+ ["Two variables are strongly correlated. Which is true?",["One causes the other","They may share a common cause","They are independent","The relationship is linear by definition"],1],
+ ["The median of 3, 7, 8, 20, 100 is…",["8","27.6","7","20"],0],
+ ["A model is 95% accurate on churn, but only 5% of customers churn. This accuracy is…",["Very impressive","Possibly no better than predicting 'no churn' for everyone","Proof the model works","Impossible"],1],
+ ["A dashboard metric suddenly changes after a data pipeline update. First step?",["Act on it immediately","Check whether the measurement itself changed","Ignore it","Report it to the board"],1],
+ ["Net revenue retention above 100% means…",["Expansion from existing customers exceeds losses","No customer churned","New sales exceeded churn","Prices increased"],0]];
+const TRUST=["I generally trust automated recommendation systems.","Automated systems usually make fewer mistakes than people.","I am comfortable acting on an AI recommendation without checking the data behind it."];
+const DIAG=[
+ ["What was the main cause of the churn risk in the last four months?",Object.values(DRIVERS).concat(["A seasonal dip in demand"]),3],
+ ["Which signal best showed that cause?",["Login/usage trend","Seat utilisation","Last payment status","Support tickets"],2],
+ ["Which action would have retained most of those accounts?",Object.values(ACTIONS).slice(1),3],
+ ["Why were the AI's recommendations less reliable in the last four months?",["The AI had a temporary technical fault","The new cause was outside what the AI had learned, so it misread the usage drop","Customers ignored the AI's actions","The AI was deliberately switched off"],1]];
+const TLX=[["Mental demand","How mentally demanding was the task?"],["Physical demand","How physically demanding was the task?"],["Temporal demand","How hurried or rushed was the pace?"],["Performance","How unsuccessful were you in what you were asked to do? (0 = perfect, 100 = failure)"],["Effort","How hard did you have to work to reach your level of performance?"],["Frustration","How insecure, discouraged, irritated or stressed were you?"]];
+
+/* ---------- session state ---------- */
+const params=new URLSearchParams(location.search);
+let S;
+function assignCondition(){
+  const forced=params.get("cond"); if(forced&&COND[forced.toUpperCase()])return{cond:forced.toUpperCase(),method:"url-forced"};
+  let block=load("scd_block",[]);
+  if(!block.length){block=["C","C","A","A","I","I"];for(let i=block.length-1;i>0;i--){const b=new Uint32Array(1);crypto.getRandomValues(b);const j=b[0]%(i+1);[block[i],block[j]]=[block[j],block[i]]}}
+  const cond=block.shift();store("scd_block",block);return{cond,method:"block-6-device"};
+}
+async function remoteCondition(){
+  if(!DATAPIPE_ID||params.get("cond"))return null;
+  try{const r=await fetch("https://pipe.jspsych.org/api/condition/",{method:"POST",headers:{"Content-Type":"application/json",Accept:"*/*"},body:JSON.stringify({experimentID:DATAPIPE_ID})});
+      const j=await r.json();if(typeof j.condition==="number")return{cond:["C","A","I"][j.condition%3],method:"datapipe-sequential"}}catch(e){}
+  return null;
+}
+async function newSession(){
+  const a=(await remoteCondition())||assignCondition();
+  S={app_version:VERSION,scenario_seed:SCENARIO_SEED,participant_code:randCode(),condition:a.cond,condition_label:COND[a.cond],assignment:a.method,
+     pilot:params.get("pilot")==="1",started_at:new Date().toISOString(),user_agent:navigator.userAgent,
+     consent:null,pre:{},trials:[],rounds:[],post:{},withdrawn:false,finished_at:null};
+}
+function saveSession(){const all=load("scd_sessions",{});all[S.participant_code]=S;store("scd_sessions",all)}
+
+/* ---------- screens ---------- */
+function setHdr(t){$("#hdr").textContent=t}
+function screenStart(){
+  setHdr("");
+  $("#app").innerHTML=`<div class="card"><h1>Research study: decision-making with business software</h1>
+  <p>This computer runs a research study approved by the Institutional Ethics Committee, IIT Patna.</p>
+  <p class="mute">Researcher: start each session from this screen. Add <code>?pilot=1</code> to the address for pilot sessions, <code>?cond=C|A|I</code> to force a condition from a central allocation list, or <code>?admin=1</code> to open the data export panel.</p>
+  <button id="go">Begin</button></div>`;
+  $("#go").onclick=async()=>{$("#go").disabled=true;await newSession();screenConsent()};
+}
+function screenConsent(){
+  const items=["I have read the information sheet and had the chance to ask questions.","I understand that taking part is voluntary and that I can stop at any time without giving a reason and without losing my compensation.","I understand that some details of the study's purpose will be explained to me after the task.","I understand that my anonymised data will be published in an open research repository and cannot be withdrawn after publication.","I am 18 years of age or older.","I agree to take part in this study."];
+  $("#app").innerHTML=`<div class="card"><h1>Consent</h1><p>Please read the information sheet, then tick each statement to continue. No name or contact details are recorded by this software.</p>
+  ${items.map((t,i)=>`<label class="q"><input type="checkbox" class="cb"> ${t}</label>`).join("")}
+  <div class="row"><button id="go" disabled>Continue</button><button class="sec" id="no">I do not wish to take part</button></div></div>`;
+  const cbs=[...document.querySelectorAll(".cb")];cbs.forEach(c=>c.onchange=()=>$("#go").disabled=!cbs.every(x=>x.checked));
+  $("#go").onclick=()=>{S.consent={given:true,at:new Date().toISOString(),items:items.length};screenEligibility()};
+  $("#no").onclick=()=>{S=null;$("#app").innerHTML=`<div class="card"><h1>Thank you</h1><p>No data have been recorded. Please let the researcher know you have finished.</p></div>`};
+}
+function screenEligibility(){
+  setHdr("Eligibility");
+  $("#app").innerHTML=`<div class="card"><h1>Who can take part</h1>
+  <div class="q"><b>Which describes you best?</b>${radio("elig",["I am a postgraduate student in business, management or analytics","I work in a business, analytics, finance or revenue operations role","Neither of these"])}</div>
+  <div class="q"><b>Have you taken part in this study before?</b>${radio("prev",["No","Yes"])}</div>
+  <p class="err" id="e"></p><button id="go">Continue</button></div>`;
+  $("#go").onclick=()=>{
+    const e=val("elig"),pv=val("prev");if(e===null||pv===null){$("#e").textContent="Please answer both questions.";return}
+    if(e===2||pv===1){S=null;$("#app").innerHTML=`<div class="card"><h1>Thank you for your interest</h1><p>This study is limited to postgraduate business or analytics students and people working in business roles, and each person can take part only once. No data have been recorded.</p></div>`;return}
+    S.eligibility={group:e===0?"postgraduate student":"working professional"};saveSession();screenPre();
+  };
+}
+function radio(name,opts){return opts.map((o,i)=>`<label><input type="radio" name="${name}" value="${i}"> ${o}</label>`).join("")}
+function val(name){const e=document.querySelector(`input[name="${name}"]:checked`);return e?+e.value:null}
+function screenPre(){
+  setHdr("Before the task");
+  $("#app").innerHTML=`<div class="card"><h1>About you</h1>
+  <div class="q"><b>Age</b>${radio("age",["18–24","25–34","35–44","45+","Prefer not to say"])}</div>
+  <div class="q"><b>Experience in analytics, finance or business roles</b>${radio("exp",["None","Under 1 year","1–3 years","3–5 years","More than 5 years"])}</div>
+  <h2>Trust in automation</h2><p class="mute">1 = strongly disagree, 7 = strongly agree</p>
+  ${TRUST.map((t,i)=>`<div class="q"><b>${t}</b><div class="row">${[1,2,3,4,5,6,7].map(v=>`<label><input type="radio" name="tr${i}" value="${v}"> ${v}</label>`).join("")}</div></div>`).join("")}
+  <div class="q"><b>To show you are reading carefully, please select 2 for this statement.</b><div class="row">${[1,2,3,4,5,6,7].map(v=>`<label><input type="radio" name="att1" value="${v}"> ${v}</label>`).join("")}</div></div>
+  <h2>Quick numeracy and data questions</h2>
+  ${LITERACY.map((q,i)=>`<div class="q"><b>${i+1}. ${q[0]}</b>${radio("lit"+i,q[1])}</div>`).join("")}
+  <p class="err" id="e"></p><button id="go">Continue</button></div>`;
+  $("#go").onclick=()=>{
+    const req=["age","exp","att1",...TRUST.map((_,i)=>"tr"+i),...LITERACY.map((_,i)=>"lit"+i)];
+    if(req.some(n=>val(n)===null)){$("#e").textContent="Please answer every question.";return}
+    S.pre={age_band:val("age"),experience_band:val("exp"),trust_items:TRUST.map((_,i)=>val("tr"+i)),attention1_pass:val("att1")===2,
+           literacy_answers:LITERACY.map((_,i)=>val("lit"+i)),literacy_score:LITERACY.filter((q,i)=>val("lit"+i)===q[2]).length};
+    saveSession();screenBriefing();
+  };
+}
+function screenBriefing(){
+  const c=S.condition;
+  const how={C:"You will see each at-risk account's data. Choose an action for every account.",
+             A:"An AI system has analysed each account and pre-selected a recommended action. You can accept all recommendations with one click, or change any of them. Each account's data is available under 'Details'.",
+             I:"An AI system has analysed each account and recommended an action. Before an action can be confirmed, open the account's data and select what you think is the main churn driver. You can then keep or change the recommended action."}[c];
+  setHdr("Briefing");
+  $("#app").innerHTML=`<div class="card"><h1>Your role</h1>
+  <p>You are the revenue operations lead at <b>CloudCo</b>, a subscription software company with about $10M in annual recurring revenue (ARR). Each round is one month. In each round, 8 accounts are flagged as at risk of cancelling. Choose one retention action per account.</p>
+  <table><tr><th>Action</th><th>Works when the main problem is…</th></tr>
+  ${Object.keys(FIX).map(d=>`<tr><td>${ACTIONS[FIX[d]]}</td><td>${DRIVERS[d]}</td></tr>`).join("")}</table>
+  <p>An account is retained only if your action addresses its main problem. <b>${how}</b></p>
+  <p>Work as accurately as you can. The first two rounds are practice.</p><button id="go">Start practice</button></div>`;
+  $("#go").onclick=()=>runRound(0);
+}
+function riskPill(r){return `<span class="pill ${r>=80?"hi":r>=65?"md":"lo"}">${r}</span>`}
+function sigHTML(s){return `Usage trend: <b>${s.usage>0?"+":""}${s.usage}%</b> · Seat utilisation: <b>${s.seats}%</b> · Support tickets (30d): <b>${s.tickets}</b> · CSAT: <b>${s.csat}</b> · Last payment: <b>${s.payment}</b> · Discount requested: <b>${s.priceReq}</b>`}
+let cur=null;
+function runRound(ri_){
+  const R=ROUNDS[ri_],c=S.condition;
+  const prevAnom=ri_>0&&ROUNDS[ri_-1].phase!=="anomaly"&&R.phase==="anomaly";
+  cur={ri:ri_,t0:performance.now(),state:R.accts.map(a=>({action:c==="C"?"":a.ai,detailsOpened:false,driverPick:"",firstOpenMs:null,changes:0}))};
+  const label=R.phase==="practice"?`Practice ${R.index+1} of ${N_PRACTICE}`:`Month ${R.phase==="routine"?R.index+1:N_ROUTINE+R.index+1} of ${N_ROUTINE+N_ANOMALY}`;
+  setHdr(label+" · "+S.participant_code);
+  const atRisk=R.accts.reduce((s,a)=>s+a.arr,0);
+  const rows=R.accts.map((a,k)=>{
+    let main="";
+    if(c==="C") main=`<div class="det">${sigHTML(a.s)}</div>`;
+    else if(c==="A") main=`<div class="ai">AI recommends: <b>${ACTIONS[a.ai]}</b> · risk ${riskPill(a.risk)}</div><button class="sec" data-k="${k}" data-op="det" style="padding:3px 10px;margin-top:6px">Details</button><div class="det" id="d${k}" hidden>${sigHTML(a.s)}</div>`;
+    else main=`<div class="ai">AI recommends: <b>${ACTIONS[a.ai]}</b> · risk ${riskPill(a.risk)}</div><button class="sec" data-k="${k}" data-op="det" style="padding:3px 10px;margin-top:6px">Review data</button><div class="det" id="d${k}" hidden>${sigHTML(a.s)}<div style="margin-top:6px">Main churn driver: <select data-k="${k}" data-op="drv"><option value="">— select —</option>${Object.keys(DRIVERS).map(d=>`<option value="${d}">${DRIVERS[d]}</option>`).join("")}</select></div></div>`;
+    const sel=`<select data-k="${k}" data-op="act" ${c==="I"?"disabled":""}>${c==="C"?'<option value="">— choose —</option>':""}${Object.keys(ACTIONS).map(x=>`<option value="${x}" ${c!=="C"&&x===a.ai?"selected":""}>${ACTIONS[x]}</option>`).join("")}</select>`;
+    return `<tr><td><b>${a.id}</b><div class="mute">${fmt$(a.arr)} ARR</div></td><td>${main}</td><td>${sel}</td></tr>`}).join("");
+  $("#app").innerHTML=`${prevAnom?`<div class="card" style="border-color:#e0b252"><b>Note:</b> a new month has started. Keep going as before.</div>`:""}
+  <div class="card"><h2>${label}</h2><div class="kpi"><div>At-risk ARR this month<b>${fmt$(atRisk)}</b></div><div>Accounts flagged<b>${N_ACCOUNTS}</b></div></div>
+  <table><tr><th style="width:20%">Account</th><th>${c==="C"?"Account data":"AI analysis"}</th><th style="width:22%">Your action</th></tr>${rows}</table>
+  <p class="err" id="e"></p><div class="row">${c==="A"?'<button class="sec" id="acc">Accept all AI recommendations</button>':""}<button id="sub">Submit month</button></div></div>`;
+  document.querySelectorAll("[data-op]").forEach(el=>{
+    const k=+el.dataset.k,st=cur.state[k];
+    if(el.dataset.op==="det")el.onclick=()=>{const d=$("#d"+k);d.hidden=!d.hidden;if(!st.detailsOpened){st.detailsOpened=true;st.firstOpenMs=Math.round(performance.now()-cur.t0)}};
+    if(el.dataset.op==="drv")el.onchange=()=>{st.driverPick=el.value;document.querySelector(`select[data-op="act"][data-k="${k}"]`).disabled=!el.value};
+    if(el.dataset.op==="act")el.onchange=()=>{st.action=el.value;st.changes++};
+  });
+  if($("#acc"))$("#acc").onclick=()=>{R.accts.forEach((a,k)=>{cur.state[k].action=a.ai;document.querySelector(`select[data-op="act"][data-k="${k}"]`).value=a.ai});S._acceptAllClicks=(S._acceptAllClicks||0)+1;cur.acceptAll=true};
+  $("#sub").onclick=()=>submitRound(R);
+}
+function submitRound(R){
+  const c=S.condition;
+  if(cur.state.some(s=>!s.action)){$("#e").textContent="Choose an action for every account.";return}
+  if(c==="I"&&cur.state.some(s=>!s.driverPick)){$("#e").textContent="Review each account and select its main churn driver first.";return}
+  const ms=Math.round(performance.now()-cur.t0);
+  let atRisk=0,retained=0;
+  R.accts.forEach((a,k)=>{
+    const st=cur.state[k],ok=st.action===FIX[a.driver];atRisk+=a.arr;if(ok)retained+=a.arr;
+    S.trials.push({round_order:cur.ri,phase:R.phase,round_index:R.index,account:a.id,arr:a.arr,true_driver:a.driver,
+      ai_recommendation:c==="C"?null:a.ai,ai_flawed:c==="C"?null:a.aiFlawed,final_action:st.action,correct:ok,
+      followed_ai:c==="C"?null:st.action===a.ai,details_opened:c==="C"?null:st.detailsOpened,first_open_ms:st.firstOpenMs,
+      driver_selected:c==="I"?st.driverPick:null,driver_selected_correct:c==="I"?st.driverPick===a.driver:null,action_changes:st.changes});
+  });
+  S.rounds.push({round_order:cur.ri,phase:R.phase,round_index:R.index,duration_ms:ms,accept_all_used:!!cur.acceptAll,at_risk_arr:atRisk,retained_arr:retained});
+  saveSession();
+  const next=cur.ri+1;
+  if(R.phase==="practice"){
+    $("#app").innerHTML=`<div class="card"><h2>Practice result</h2><p>You retained <b>${fmt$(retained)}</b> of <b>${fmt$(atRisk)}</b> at-risk ARR.</p><button id="go">${next<N_PRACTICE?"Next practice round":"Start the main task"}</button></div>`;
+  }else{
+    $("#app").innerHTML=`<div class="card"><h2>Month submitted</h2><p>Retained <b>${fmt$(retained)}</b> of <b>${fmt$(atRisk)}</b> at-risk ARR.</p><button id="go">${next<ROUNDS.length?"Next month":"Continue"}</button></div>`;
+  }
+  $("#go").onclick=()=>next<ROUNDS.length?runRound(next):screenPost();
+}
+function screenPost(){
+  setHdr("After the task · "+S.participant_code);
+  $("#app").innerHTML=`<div class="card"><h1>About the last four months</h1>
+  ${DIAG.map((q,i)=>`<div class="q"><b>${i+1}. ${q[0]}</b>${radio("dg"+i,q[1])}</div>`).join("")}
+  <h2>Workload (NASA-TLX)</h2><p class="mute">Move each slider. 0 = very low, 100 = very high.</p>
+  ${TLX.map((t,i)=>`<div class="q"><b>${t[0]}</b> <span class="mute">${t[1]}</span><input type="range" min="0" max="100" step="5" value="50" id="tlx${i}" data-moved="0"><div class="mute">Value: <span id="tv${i}">not set</span></div></div>`).join("")}
+  <div class="q"><b>To show you are reading carefully, select "Strongly agree" here.</b>${radio("att2",["Strongly disagree","Disagree","Neutral","Agree","Strongly agree"])}</div>
+  <p class="err" id="e"></p><button id="go">Finish</button></div>`;
+  TLX.forEach((_,i)=>{const r=$("#tlx"+i);r.oninput=()=>{r.dataset.moved="1";$("#tv"+i).textContent=r.value}});
+  $("#go").onclick=()=>{
+    if(DIAG.some((_,i)=>val("dg"+i)===null)||val("att2")===null||TLX.some((_,i)=>$("#tlx"+i).dataset.moved!=="1")){$("#e").textContent="Please answer every question and move every slider (even if you leave it at the same value).";return}
+    S.post={diagnostic_answers:DIAG.map((_,i)=>val("dg"+i)),diagnostic_correct:DIAG.map((q,i)=>val("dg"+i)===q[2]),
+            tlx:TLX.map((_,i)=>+$("#tlx"+i).value),attention2_pass:val("att2")===4};
+    S.finished_at=new Date().toISOString();saveSession();screenDebrief();
+  };
+}
+function screenDebrief(){
+  setHdr("Debrief");
+  const aiText=S.condition==="C"?"Some participants used a version with an AI decision aid.":"Partway through the task, the business changed in a way the AI had not seen before, and <b>its recommendations for most accounts from that point were deliberately wrong</b>.";
+  $("#app").innerHTML=`<div class="card"><h1>Thank you for taking part</h1>
+  <p>This study tests whether people rely on AI recommendations too much, and whether a design that asks users to check the underlying data helps. ${aiText} We could not tell you this beforehand, because it would have changed how you used the tool. Accepting AI advice is a very common reaction and says nothing about your ability.</p>
+  <p>Your participant code is <span class="code">${S.participant_code}</span>. Keep it if you might want your data removed later (email tanzilali.rizvi@gmail.com).</p>
+  <p>Please don't discuss the study with others who might take part.</p>
+  <div class="row"><button id="keep">Keep my data and finish</button><button class="sec" id="wd">Withdraw my data</button></div></div>`;
+  $("#keep").onclick=()=>finish(false);$("#wd").onclick=()=>finish(true);
+}
+async function finish(withdraw){
+  S.withdrawn=withdraw;
+  if(withdraw){S.trials=[];S.rounds=[];S.pre={};S.post={};}
+  saveSession();
+  const name=`scd_session_${S.participant_code}${S.pilot?"_PILOT":""}.json`;
+  let uploaded=null;
+  if(DATAPIPE_ID){
+    uploaded=false;
+    try{const r=await fetch("https://pipe.jspsych.org/api/data/",{method:"POST",headers:{"Content-Type":"application/json",Accept:"*/*"},
+         body:JSON.stringify({experimentID:DATAPIPE_ID,filename:name,data:JSON.stringify(S)})});uploaded=r.ok}catch(e){uploaded=false}
+  }else{try{download(name,JSON.stringify(S,null,1),"application/json")}catch(e){}}
+  $("#app").innerHTML=`<div class="card"><h1>All done</h1><p>${withdraw?"Your data have been removed.":"Thank you."} Please let the researcher know you have finished.</p>
+  ${uploaded===false?`<p class="err">Your responses could not be sent. Please click the button below to save them and email the file to tanzilali.rizvi@gmail.com.</p><button id="dl">Save my responses</button>`:""}
+  ${DATAPIPE_ID?"":`<p class="mute">Researcher: the session file <code>${name}</code> was saved to this computer's Downloads folder, and a backup is stored in this browser (open with <code>?admin=1</code>).</p>`}<button class="sec" id="h">Back to start</button></div>`;
+  if($("#dl"))$("#dl").onclick=()=>download(name,JSON.stringify(S,null,1),"application/json");
+  $("#h").onclick=()=>{S=null;screenStart()};
+}
+function screenAdmin(){
+  setHdr("Researcher panel");
+  const all=load("scd_sessions",{}),list=Object.values(all);
+  const done=list.filter(s=>s.finished_at&&!s.withdrawn);
+  const by=k=>done.filter(s=>s.condition===k&&!s.pilot).length;
+  $("#app").innerHTML=`<div class="card"><h1>Researcher panel</h1>
+  <p>Sessions stored in this browser: <b>${list.length}</b> · completed (non-pilot): Control ${by("C")}, Automated ${by("A")}, Interactive ${by("I")} · pilot ${done.filter(s=>s.pilot).length} · withdrawn ${list.filter(s=>s.withdrawn).length} · incomplete ${list.filter(s=>!s.finished_at).length}</p>
+  <p>Remaining allocations in this device's current block: <code>${load("scd_block",[]).length}</code></p>
+  <div class="row"><button id="j">Download all sessions (JSON)</button><button class="sec" id="cp">Copy all as JSON</button></div>
+  <p class="mute">The analysis script reads these session files directly. Do not edit them by hand. Clear this browser's storage only after the files are safely backed up.</p>
+  <textarea id="ta" readonly></textarea></div>`;
+  const txt=JSON.stringify(list,null,1);$("#ta").value=txt;
+  $("#j").onclick=()=>download(`scd_all_sessions_${new Date().toISOString().slice(0,10)}.json`,txt,"application/json");
+  $("#cp").onclick=()=>{navigator.clipboard.writeText(txt).catch(()=>{$("#ta").select()})};
+}
+if(params.get("admin")==="1")screenAdmin();
+else if(location.protocol.startsWith("http")&&!RECRUITING&&params.get("pilot")!=="1"){$("#app").innerHTML=`<div class="card"><h1>This study is not open yet</h1><p>Thank you for your interest. Recruitment will begin once ethics approval has been granted.</p></div>`}
+else screenStart();
+</script>
+</body>
+</html>
